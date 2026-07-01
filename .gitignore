@@ -1,0 +1,27 @@
+# Secrets — never commit
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Pipeline mid-run checkpoints (auto-generated, not source)
+.*.checkpoint.json
+
+# Generated outputs
+*.csv
+outputs/
+*.md
+!README.md
+
+# macOS
+.DS_Store
+
+# Legacy files from early development
+aetc_structure.json
+org_scraper.py
