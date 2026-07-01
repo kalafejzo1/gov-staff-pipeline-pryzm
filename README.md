@@ -18,6 +18,8 @@ The pipeline runs in 5 stages automatically:
 
 **Recency policy (team decision, 2026-06-29):** Sources older than 3 years are excluded entirely. Leadership data that old creates more CRM noise than it resolves.
 
+**Ollama fallback:** When Gemini is unavailable the pipeline falls back to a local Ollama instance. Ollama has no web access and uses training data only — results may be stale. Use `--backend gemini` to disable the fallback if you need live data.
+
 ---
 
 ## Output
@@ -107,6 +109,19 @@ python3 pipeline.py \
 python3 pipeline.py \
   --image orgchart.png \
   --output outputs/orgs.csv
+```
+
+### Use as a library (no CLI required)
+
+```python
+from pathlib import Path
+from pipeline import run_pipeline
+
+rows = run_pipeline(
+    orgs=["Office of Naval Research", "NavalX"],
+    dow_pdf=Path("data/2026_DoW_Directory.pdf"),
+    output=Path("outputs/leadership.csv"),
+)
 ```
 
 ### All arguments
