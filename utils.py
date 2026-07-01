@@ -60,14 +60,15 @@ class OrgEntry(TypedDict):
 
 
 class SearchResult(TypedDict):
-    """Contact and descriptive data returned by a web search for one office."""
+    """Data returned by a web search for one office.
+
+    Only fields actually returned by the search prompt are included here.
+    website/phone/email were previously tracked but never returned by the
+    prompt or written to CSV — removed to eliminate silent data drift.
+    """
 
     code: str | None
-    website: str | None
-    phone: str | None
-    email: str | None
     acronym: str | None
-    description: str | None
     leadership: list[dict] | None
 
 
@@ -337,7 +338,7 @@ def claude_with_search(
 # Canonical column order for CRM import. Defined once so that all scripts
 # produce files with an identical schema that can be concatenated directly.
 CSV_FIELDS: list[str] = [
-    "org_name", "person_name", "title", "source", "confidence", "notes",
+    "org_name", "person_name", "title", "source", "confidence", "notes", "description", "acronym",
 ]
 
 
