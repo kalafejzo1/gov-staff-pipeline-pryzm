@@ -109,13 +109,33 @@ STEP 4 — LinkedIn (LAST RESORT — only when Steps 1–3 yield zero leadership
          OR "chief of engineering" OR "chief information officer" OR "chief technology officer"
          OR "senior advisor" OR "senior leader" OR "associate director" OR "principal deputy"
          OR "deputy for acquisition"
-  STRICT VALIDATION — exclude a person if ANY of the following is true:
-    ✗ Current employer on their profile is not this org or its parent command
-    ✗ The role has an end date (they have moved on)
-    ✗ Profile says "retired", "former", or "previously" in the context of this role
-    ✗ The role description does not name this specific org
-    ✗ The profile was last active more than {_SOURCE_CUTOFF_YEARS} years ago
-  For each LinkedIn leader that passes validation, add this exact note:
+
+  STRICT VALIDATION — you MUST check every one of these before including anyone from LinkedIn.
+  Exclude the person immediately if ANY of the following is true:
+
+    ✗ MOVED ON: Their current position (the top/most recent role on their profile) is at a
+      different organization — even if this org appears further down in their history.
+      A past role at this org does not count.
+
+    ✗ END DATE: The role at this org has an end date, or shows a date range with a closing year
+      (e.g. "2021–2023", "Jan 2020 – Mar 2024"). Only open-ended/present roles qualify.
+
+    ✗ RETIRED: Their profile, headline, or any role description uses the words "retired",
+      "former", "previously", "ex-", "emeritus", or "alumni" in connection with this org.
+
+    ✗ NEW ROLE ELSEWHERE: Their LinkedIn headline or current title names a different employer,
+      even if they haven't updated their history yet. Headline takes priority.
+
+    ✗ OPEN TO WORK: Their profile shows the "Open to Work" banner or says "seeking" —
+      this strongly indicates they have left their previous role.
+
+    ✗ WRONG ORG: The role description does not explicitly name this specific org (a parent
+      command name alone is not sufficient).
+
+    ✗ STALE PROFILE: The profile has had no activity and no role update in more than
+      {_SOURCE_CUTOFF_YEARS} years.
+
+  For each LinkedIn leader that passes ALL of the above checks, set notes to:
     "LinkedIn only — verify current assignment before outreach"
   → confidence = "Low" for all LinkedIn sources.
 

@@ -32,7 +32,7 @@ Every run produces a CSV with these 8 columns:
 | `person_name` | Full name of the leader |
 | `title` | Exact title as found in the source |
 | `source` | Where the data came from (e.g. `DoW Directory 2026`, `navy.mil/leadership`, `dvidshub.net`) |
-| `confidence` | `High` = official .mil/.gov or DoW PDF · `Medium` = DVIDS/SAM.gov/press release · `Low` = LinkedIn only |
+| `confidence` | `High` = official .mil/.gov or DoW PDF · `Medium` = DVIDS/SAM.gov/press release · `Low` = LinkedIn only (strict validation applied — excluded if moved on, end-dated, retired, or showing Open to Work) |
 | `notes` | Acting status, appointment date, caveats (e.g. `"LinkedIn only — verify before outreach"`) |
 | `description` | Org mission/overview from the FOM PDF, if provided |
 | `acronym` | Known acronym for the org (e.g. `ONR`, `DIU`), if found |
