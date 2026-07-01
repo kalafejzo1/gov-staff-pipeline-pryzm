@@ -1,4 +1,4 @@
-# pryzm-org-pipeline
+# gov-staff-pipeline-pryzm
 
 Converts a list of government or military organization names into a structured CSV of current leadership, ready for CRM import.
 
@@ -22,7 +22,7 @@ The pipeline runs in 5 stages automatically:
 
 ## Output
 
-Every run produces a CSV with these 7 columns:
+Every run produces a CSV with these 8 columns:
 
 | Column | Description |
 |---|---|
@@ -33,6 +33,7 @@ Every run produces a CSV with these 7 columns:
 | `confidence` | `High` = official .mil/.gov or DoW PDF · `Medium` = DVIDS/SAM.gov/press release · `Low` = LinkedIn only |
 | `notes` | Acting status, appointment date, caveats (e.g. `"LinkedIn only — verify before outreach"`) |
 | `description` | Org mission/overview from the FOM PDF, if provided |
+| `acronym` | Known acronym for the org (e.g. `ONR`, `DIU`), if found |
 
 ---
 
@@ -49,7 +50,7 @@ Every run produces a CSV with these 7 columns:
 ## Installation
 
 ```bash
-cd pryzm-org-pipeline
+cd gov-staff-pipeline-pryzm
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -142,8 +143,11 @@ python3 -m pytest tests/
 ## File Structure
 
 ```
-pryzm-org-pipeline/
-├── pipeline.py           — Main pipeline (org names or image → CSV)
+gov-staff-pipeline-pryzm/
+├── pipeline.py           — Orchestration: run_pipeline() API + CLI entry point
+├── backends.py           — AI backend dispatch (Gemini, Ollama, Anthropic)
+├── dow.py                — DoW Directory PDF parser
+├── search.py             — Web search stage (prompt builder + backend dispatch)
 ├── utils.py              — Shared infrastructure (API clients, CSV writer, retry logic)
 ├── data/
 │   └── 2026_DoW_Directory.pdf  — DoW Directory, used as primary source
