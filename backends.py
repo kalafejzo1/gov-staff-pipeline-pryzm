@@ -62,6 +62,11 @@ def call_gemini(prompt: str, system: str) -> str:
                     tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())]
                 ),
             )
+            if response.text is None:
+                raise RuntimeError(
+                    f"Gemini returned no text content "
+                    f"(finish_reason={getattr(response, 'prompt_feedback', 'unknown')})"
+                )
             return response.text
         except Exception as exc:
             exc_str = str(exc)
