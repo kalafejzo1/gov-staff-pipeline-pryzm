@@ -1,5 +1,6 @@
 # Secrets — never commit
 .env
+.streamlit/secrets.toml
 
 # Python cache
 __pycache__/
@@ -18,6 +19,9 @@ venv/
 outputs/
 *.md
 !README.md
+
+# Fetched at runtime by fetch_dow.py / the dashboard's refresh button — not source
+data/*.pdf
 
 # macOS
 .DS_Store

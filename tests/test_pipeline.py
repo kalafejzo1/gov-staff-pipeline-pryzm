@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline import build_rows
 from dow import _looks_like_name, _find_section_start
 from search import _is_program_office, _build_search_prompt, _CUTOFF_YEAR, _SOURCE_CUTOFF_YEARS
-from utils import strip_json_fences
+from utils import strip_json_fences, rows_to_xlsx_bytes, CSV_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +119,35 @@ def test_strip_json_fences_no_fences():
 
 def test_strip_json_fences_plain_backticks():
     assert strip_json_fences("```\n[]\n```") == "[]"
+
+
+# ---------------------------------------------------------------------------
+# rows_to_xlsx_bytes
+# ---------------------------------------------------------------------------
+
+def test_rows_to_xlsx_bytes_is_valid_workbook():
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    rows = [_leader_row(confidence="High"), _leader_row(confidence="Low")]
+    wb = load_workbook(BytesIO(rows_to_xlsx_bytes(rows)))
+    ws = wb.active
+    assert [c.value for c in ws[1]] == CSV_FIELDS
+    assert ws.max_row == 3  # header + 2 rows
+
+def test_rows_to_xlsx_bytes_empty_rows():
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    wb = load_workbook(BytesIO(rows_to_xlsx_bytes([])))
+    assert wb.active.max_row == 1  # header only
+
+
+def _leader_row(confidence="High"):
+    return {
+        "org_name": "Office of Naval Research", "person_name": "Jane Doe", "title": "Director",
+        "source": "https://onr.navy.mil", "confidence": confidence, "notes": "", "description": "", "acronym": "ONR",
+    }
 
 
 # ---------------------------------------------------------------------------

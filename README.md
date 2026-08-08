@@ -4,6 +4,45 @@ Converts a list of government or military organization names into a structured C
 
 ---
 
+## Web Dashboard (no terminal required)
+
+For non-technical use, `app.py` wraps the pipeline in a Streamlit dashboard: type organization names in a browser, click **Generate CSV**, download the result. No install, no API keys to manage — those are configured once by whoever deploys it.
+
+**If it's already deployed,** just open the shared link.
+
+**To deploy it yourself** (~5 minutes, one-time):
+
+1. Push this repo to GitHub (already done if you're reading this on GitHub).
+2. Go to [share.streamlit.io](https://share.streamlit.io), sign in with GitHub, and click **New app**.
+3. Pick this repo, branch `main`, and set the main file to `app.py`.
+4. Under **Advanced settings → Secrets**, paste:
+   ```toml
+   GEMINI_API_KEY = "your_gemini_key"
+   ANTHROPIC_API_KEY = "your_anthropic_key"
+   ```
+5. Click **Deploy**. You'll get a `*.streamlit.app` URL to share with your team.
+6. Optional but recommended for a shared/internal tool: under app **Settings → Sharing**, restrict viewers to specific email addresses so the (shared) API quota isn't open to the public internet.
+
+**DoW Directory PDF:** the dashboard's Advanced options has a **Fetch latest from siliconvalleydefense.org** button — it follows that site's link chain (siliconvalleydefense.org → Google Sites → Google Drive) and downloads whichever revision is currently posted, caching it at `data/2026_DoW_Directory.pdf` so every run after that uses it automatically. On Streamlit Community Cloud, that cache is cleared whenever the app restarts (redeploy, or after enough idle time), so whoever's using it may need to click it again occasionally — it's fast (a few seconds).
+
+The scraper depends on the HTML structure of two third-party pages it doesn't control, so if siliconvalleydefense.org or the linked Google Sites page gets redesigned, the fetch will fail with a specific error rather than silently returning nothing. If that happens, the fallback is to download the PDF yourself from the site and either upload it via a file uploader (not currently in the dashboard — ask for it if you want it) or place it at `data/2026_DoW_Directory.pdf` locally / `git add -f` it into the repo before deploying (only do this if the repo is private, or you've confirmed the PDF is fine to publish — it's excluded from git by default).
+
+To run the dashboard on your own laptop instead of deploying it:
+
+```bash
+pip install -r requirements.txt
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # then fill in your keys
+streamlit run app.py
+```
+
+---
+
+## Command-line usage
+
+Everything below describes the original CLI (`pipeline.py`). Use it if you want scripting/automation instead of the dashboard.
+
+---
+
 ## How It Works
 
 The pipeline runs in 5 stages automatically:
@@ -159,18 +198,23 @@ python3 -m pytest tests/
 
 ```
 gov-staff-pipeline-pryzm/
+├── app.py                — Streamlit dashboard (non-technical front end)
 ├── pipeline.py           — Orchestration: run_pipeline() API + CLI entry point
 ├── backends.py           — AI backend dispatch (Gemini, Ollama, Anthropic)
 ├── dow.py                — DoW Directory PDF parser
+├── fetch_dow.py           — Downloads the latest DoW Directory PDF from siliconvalleydefense.org
 ├── search.py             — Web search stage (prompt builder + backend dispatch)
 ├── utils.py              — Shared infrastructure (API clients, CSV writer, retry logic)
 ├── data/
-│   └── 2026_DoW_Directory.pdf  — DoW Directory, used as primary source
+│   └── 2026_DoW_Directory.pdf  — DoW Directory (fetched, not committed — see Web Dashboard section)
 ├── tests/
-│   └── test_pipeline.py  — Unit tests (25 passing)
+│   ├── test_pipeline.py  — Unit tests (25 passing)
+│   └── test_fetch_dow.py — Tests for the DoW-fetch HTML parsing (5 passing)
 ├── requirements.txt      — Python dependencies
+├── .streamlit/
+│   └── secrets.toml.example — API key template for the dashboard
 ├── .env.example          — API key template (copy to .env and fill in)
-└── .gitignore            — Excludes .env, outputs/, and generated files
+└── .gitignore            — Excludes .env, outputs/, fetched PDFs, and generated files
 ```
 
 ---
