@@ -194,10 +194,20 @@ def search_office(
 
     prompt = _build_search_prompt(name, parent, is_program)
     active_system = system_prompt if system_prompt is not None else _SEARCH_SYSTEM
-    try:
-        raw = call_backend(client, prompt, active_system, backend, max_search_uses=10)
-        match = re.search(r"\{.*\}", strip_json_fences(raw), re.DOTALL)
-        if match:
+
+    # A malformed/unparseable JSON response is usually a one-off generation
+    # glitch, not a systemic failure — an identical retry typically succeeds
+    # (confirmed empirically: Gemini returned invalid JSON for an org, then
+    # succeeded immediately on retry). Worth one extra call rather than
+    # silently counting a real org as "0 leaders found". Any other exception
+    # (missing API key, quota exhausted, network error) won't be fixed by
+    # retrying, so those still fail fast on the first attempt.
+    for attempt in range(2):
+        try:
+            raw = call_backend(client, prompt, active_system, backend, max_search_uses=10)
+            match = re.search(r"\{.*\}", strip_json_fences(raw), re.DOTALL)
+            if not match:
+                raise ValueError("No JSON object found in response")
             data = json.loads(match.group())
             leaders = data.get("leadership") or []
             if isinstance(leaders, str):
@@ -208,9 +218,16 @@ def search_office(
                 "acronym":    data.get("acronym"),
                 "leadership": leaders,
             }
-    except Exception as exc:
-        logger.warning("    Search failed for '%s': %s", name, exc)
-        logger.debug("    Full traceback for '%s':", name, exc_info=True)
+        except (json.JSONDecodeError, ValueError) as exc:
+            if attempt == 0:
+                logger.warning("    Malformed response for '%s' (%s) — retrying once", name, exc)
+                continue
+            logger.warning("    Search failed for '%s': %s", name, exc)
+            logger.debug("    Full traceback for '%s':", name, exc_info=True)
+        except Exception as exc:
+            logger.warning("    Search failed for '%s': %s", name, exc)
+            logger.debug("    Full traceback for '%s':", name, exc_info=True)
+            break
 
     logger.info("        └─ 0 leader(s) found")
     return {"code": None, "acronym": None, "leadership": []}

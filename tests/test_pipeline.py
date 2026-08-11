@@ -192,6 +192,34 @@ def test_find_section_start_not_found():
     assert _find_section_start(lines, "Nonexistent Org XYZ") is None
 
 
+def test_find_section_start_ignores_page_footer_stamp():
+    # A running page-footer/header stamp repeats the chapter name on every
+    # page of a large multi-org chapter — matching on it would lock onto
+    # whatever content happens to follow on that first page, not the
+    # queried org's own section. Regression test for a real bug: searching
+    # "Office of the Secretary of War" locked onto such a stamp and pulled
+    # in ~100 rows from unrelated agencies (Missile Defense Agency, EXIM Bank).
+    lines = [
+        "Page 95 of 453 Office of the Secretary of War 2026 DoW Directory Rev 8",
+        "Some Unrelated Agency - Director",
+        "Office of the Secretary of War",
+        "Jules Hurst - Under Secretary of War (Comptroller)",
+    ]
+    assert _find_section_start(lines, "Office of the Secretary of War") == 2
+
+
+def test_find_section_start_rejects_generic_word_overlap_false_positive():
+    # "Office of the Secretary of War" and "Office of the Secretary of the
+    # Air Force" share 4 of 5 words (office/of/the/secretary) — all generic
+    # scaffolding, not distinguishing content. The overlap scorer must weigh
+    # the distinctive words (secretary, war), not raw word-set overlap.
+    lines = [
+        "Ben Maitre - Director, Legislative Liaison, Office of the Secretary of the Air Force",
+        "Jane Roe - Some Other Title",
+    ]
+    assert _find_section_start(lines, "Office of the Secretary of War") is None
+
+
 def test_build_rows_dow_leaders_come_first():
     """DoW leaders should appear before web-search leaders."""
     offices = [_office("Defense Innovation Unit")]
@@ -282,3 +310,67 @@ def test_build_search_prompt_non_program_has_no_pm_note():
     # but should NOT include the program-office-specific Step 3 instruction.
     prompt = _build_search_prompt("Office of Naval Research", "DoN", is_program=False)
     assert "program executive officer" not in prompt.lower() or "in step 3" not in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# search_office — retry on malformed JSON
+# ---------------------------------------------------------------------------
+
+def test_search_office_retries_once_on_malformed_json(monkeypatch):
+    # Regression test: Gemini returned invalid JSON for a real org this
+    # session; the org was silently counted as "0 leaders" even though a
+    # retry succeeded immediately. search_office must retry once before
+    # giving up, since this is typically a one-off generation glitch.
+    import search as search_module
+
+    responses = iter([
+        '{"code": null, "acronym": "ONR", "leadership": [',  # truncated/invalid JSON
+        '{"code": null, "acronym": "ONR", "leadership": [{"name": "Jane Doe", "title": "Director", "source": "x", "confidence": "High", "notes": ""}]}',
+    ])
+    calls = []
+
+    def fake_call_backend(client, prompt, system, backend, **kwargs):
+        calls.append(1)
+        return next(responses)
+
+    monkeypatch.setattr(search_module, "call_backend", fake_call_backend)
+    result = search_module.search_office(None, _office("Office of Naval Research"), 1, 1)
+
+    assert len(calls) == 2
+    assert len(result["leadership"]) == 1
+    assert result["leadership"][0]["name"] == "Jane Doe"
+
+
+def test_search_office_does_not_retry_on_non_json_error(monkeypatch):
+    # A missing API key / quota exhaustion / network error won't be fixed by
+    # retrying the same call — those should fail fast on the first attempt,
+    # not waste a second call repeating the same error.
+    import search as search_module
+
+    calls = []
+
+    def fake_call_backend(client, prompt, system, backend, **kwargs):
+        calls.append(1)
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    monkeypatch.setattr(search_module, "call_backend", fake_call_backend)
+    result = search_module.search_office(None, _office("Office of Naval Research"), 1, 1)
+
+    assert len(calls) == 1
+    assert result["leadership"] == []
+
+
+def test_search_office_gives_up_after_second_malformed_response(monkeypatch):
+    import search as search_module
+
+    calls = []
+
+    def fake_call_backend(client, prompt, system, backend, **kwargs):
+        calls.append(1)
+        return "not json at all"
+
+    monkeypatch.setattr(search_module, "call_backend", fake_call_backend)
+    result = search_module.search_office(None, _office("Office of Naval Research"), 1, 1)
+
+    assert len(calls) == 2
+    assert result["leadership"] == []

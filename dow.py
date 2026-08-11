@@ -26,6 +26,13 @@ _SKIP_FIRST_WORDS = frozenset(
     {"vacant", "tbd", "n/a", "see", "for", "and", "the", "note", "source", "website"}
 )
 
+# Filler words that appear in most org names and carry no distinguishing
+# signal on their own (e.g. "Office of the Secretary of War" vs "Office of
+# the Secretary of the Air Force" share 4 of 5 words but name different
+# organizations). Excluded from word-overlap scoring so a match requires
+# the actually distinctive words to line up, not just the generic scaffolding.
+_GENERIC_ORG_WORDS = frozenset({"office", "of", "the", "and", "for", "a", "an", "in", "on"})
+
 # Words anywhere in the pre-hyphen text that indicate an org name, not a person.
 _ORG_KEYWORDS = frozenset({
     "office", "offices", "command", "department", "division", "center", "program",
@@ -82,6 +89,14 @@ def _find_section_start(lines: list[str], org_name: str) -> int | None:
         line = raw.strip()
         if not line:
             continue
+        # Page footer/header stamps (e.g. "Page 95 of 453 Office of the
+        # Secretary of War 2026 DoW Directory Rev 8") repeat the enclosing
+        # chapter's name on every page of that chapter. Matching on one is a
+        # false positive — it's not a section header, so the "leaders" that
+        # follow are actually whatever sub-office happens to be mid-listing
+        # on that page, not this org's own roster.
+        if _FOOTER_RE.match(line):
+            continue
         line_lower = line.lower()
 
         text_score = 0.0
@@ -94,8 +109,9 @@ def _find_section_start(lines: list[str], org_name: str) -> int | None:
         else:
             q_words = set(query.split())
             l_words = set(line_lower.split())
-            if len(q_words) >= 2:
-                overlap = len(q_words & l_words) / len(q_words)
+            distinctive = q_words - _GENERIC_ORG_WORDS or q_words
+            if len(distinctive) >= 2:
+                overlap = len(distinctive & l_words) / len(distinctive)
                 if overlap >= 0.75:
                     text_score = overlap
 
@@ -160,8 +176,8 @@ def extract_from_dow_pdf(
 
         leaders: list[dict] = []
 
-        for raw in all_lines[header_idx + 1: header_idx + 250]:
-            stripped = raw.strip()
+        for line_idx in range(header_idx + 1, min(header_idx + 250, len(all_lines))):
+            stripped = all_lines[line_idx].strip()
 
             # Skip page footers
             if _FOOTER_RE.match(stripped):
@@ -173,7 +189,13 @@ def extract_from_dow_pdf(
             if stripped.lower() in org_set_lower and stripped.lower() != org_name.lower():
                 break
             # Stop if we hit any new section header — all-caps line with no dash
-            # (catches sections not in the input list, preventing bleed-over)
+            # (catches sections not in the input list, preventing bleed-over).
+            # Deliberately conservative: this document nests sub-offices under
+            # a parent identically whether they belong to the same org or a
+            # different one (e.g. ONR's own "Division 312: ..." sub-headers
+            # look structurally identical to a boundary into a new agency), so
+            # a broader "any header-shaped line" stop was tried and reverted —
+            # it truncated legitimately deep single-org rosters.
             if (stripped == stripped.upper() and len(stripped) > 6
                     and "-" not in stripped and stripped.lower() != org_name.lower()):
                 break
