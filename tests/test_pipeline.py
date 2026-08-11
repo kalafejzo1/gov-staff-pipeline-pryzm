@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from pipeline import build_rows
 from dow import _looks_like_name, _find_section_start
 from search import _is_program_office, _build_search_prompt, _CUTOFF_YEAR, _SOURCE_CUTOFF_YEARS
-from utils import strip_json_fences, rows_to_xlsx_bytes, CSV_FIELDS
+from utils import strip_json_fences, rows_to_xlsx_bytes, rows_to_csv_bytes, CSV_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +143,39 @@ def test_rows_to_xlsx_bytes_empty_rows():
     assert wb.active.max_row == 1  # header only
 
 
+def test_rows_to_xlsx_bytes_custom_fields():
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    fields = ["person_name", "portfolio", "source"]
+    rows = [{"person_name": "Jane Doe", "portfolio": "Aviation", "source": "https://navy.mil/x"}]
+    wb = load_workbook(BytesIO(rows_to_xlsx_bytes(rows, fields=fields, sheet_title="PAE")))
+    ws = wb.active
+    assert ws.title == "PAE"
+    assert [c.value for c in ws[1]] == fields
+    assert ws["A2"].value == "Jane Doe"
+
+
+# ---------------------------------------------------------------------------
+# rows_to_csv_bytes
+# ---------------------------------------------------------------------------
+
+def test_rows_to_csv_bytes_default_fields():
+    rows = [_leader_row(confidence="High")]
+    csv_text = rows_to_csv_bytes(rows).decode()
+    assert csv_text.splitlines()[0] == ",".join(CSV_FIELDS)
+    assert "Jane Doe" in csv_text
+
+def test_rows_to_csv_bytes_custom_fields_and_quoting():
+    rows = [{"person_name": 'Jane "The Fixer" Doe', "portfolio": "Munitions, Aviation"}]
+    csv_text = rows_to_csv_bytes(rows, fields=["person_name", "portfolio"]).decode()
+    lines = csv_text.splitlines()
+    assert lines[0] == "person_name,portfolio"
+    # Embedded quotes and commas must be properly escaped, not corrupt the row
+    assert '"Jane ""The Fixer"" Doe"' in lines[1]
+    assert '"Munitions, Aviation"' in lines[1]
+
+
 def _leader_row(confidence="High"):
     return {
         "org_name": "Office of Naval Research", "person_name": "Jane Doe", "title": "Director",
@@ -264,6 +297,57 @@ def test_build_rows_no_dow_backward_compatible():
 
 
 # ---------------------------------------------------------------------------
+# run_pipeline — resumes from an existing checkpoint
+# ---------------------------------------------------------------------------
+
+def test_run_pipeline_resumes_from_checkpoint(tmp_path, monkeypatch):
+    # The dashboard now submits the same org list to the same deterministic
+    # output path on retry (see app.py), specifically so this resume path
+    # kicks in after a dropped connection on a large batch instead of
+    # re-searching everything from scratch. Verify it actually skips
+    # already-checkpointed orgs and only searches the rest.
+    import json
+
+    import pipeline as pipeline_module
+
+    output_path = tmp_path / "test_output.csv"
+    checkpoint_path = output_path.parent / f".{output_path.stem}.checkpoint.json"
+    checkpoint_path.write_text(json.dumps({
+        "NavalX": {
+            "code": None, "acronym": None,
+            "leadership": [{"name": "Cached Leader", "title": "Cached Title",
+                             "source": "x", "confidence": "High", "notes": ""}],
+        },
+    }))
+
+    calls = []
+
+    def fake_search_office(client, office, index, total, backend):
+        calls.append(office["name"])
+        return {
+            "code": None, "acronym": None,
+            "leadership": [{"name": "Fresh Leader", "title": "Fresh Title",
+                             "source": "y", "confidence": "High", "notes": ""}],
+        }
+
+    monkeypatch.setattr(pipeline_module, "search_office", fake_search_office)
+    monkeypatch.setattr(pipeline_module.time, "sleep", lambda _: None)
+
+    rows = pipeline_module.run_pipeline(
+        orgs=["Office of Naval Research", "NavalX"],
+        output=output_path,
+        backend="gemini",
+    )
+
+    assert calls == ["Office of Naval Research"]  # NavalX skipped — served from checkpoint
+    navalx_rows = [r for r in rows if r["org_name"] == "NavalX"]
+    assert navalx_rows[0]["person_name"] == "Cached Leader"
+    onr_rows = [r for r in rows if r["org_name"] == "Office of Naval Research"]
+    assert onr_rows[0]["person_name"] == "Fresh Leader"
+    assert not checkpoint_path.exists()  # cleared after a fully successful run
+
+
+# ---------------------------------------------------------------------------
 # Program office detection
 # ---------------------------------------------------------------------------
 
@@ -272,6 +356,7 @@ def test_is_program_office_detects_common_prefixes():
     assert _is_program_office("PdM Tactical Radios") is True
     assert _is_program_office("PEO Command and Control") is True
     assert _is_program_office("PMO Rapid Sustainment") is True
+    assert _is_program_office("PAE Ground Combat Systems") is True
 
 
 def test_is_program_office_detects_keyword_phrases():
@@ -310,6 +395,58 @@ def test_build_search_prompt_non_program_has_no_pm_note():
     # but should NOT include the program-office-specific Step 3 instruction.
     prompt = _build_search_prompt("Office of Naval Research", "DoN", is_program=False)
     assert "program executive officer" not in prompt.lower() or "in step 3" not in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# call_gemini — retry on empty response
+# ---------------------------------------------------------------------------
+
+def test_call_gemini_retries_on_no_text_content(monkeypatch):
+    # Regression test: a "no text content" response (empty/blocked generation)
+    # is a transient glitch, not a real failure, but previously fell straight
+    # through the rate-limit-only retry check and raised immediately instead
+    # of retrying (Ollama fallback, the old failure path here, has since
+    # been removed entirely — it never worked on a hosted deployment anyway).
+    import sys
+    import types as pytypes
+
+    import backends as backends_module
+
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr(backends_module.time, "sleep", lambda _: None)
+
+    class FakeResponse:
+        def __init__(self, text):
+            self.text = text
+            self.prompt_feedback = "SAFETY"
+
+    responses = iter([FakeResponse(None), FakeResponse("real answer")])
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return next(responses)
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = FakeModels()
+
+    class _AcceptsAnyKwargs:
+        def __init__(self, **kwargs):
+            pass
+
+    fake_genai = pytypes.ModuleType("google.genai")
+    fake_genai.Client = FakeClient
+    fake_genai_types = pytypes.ModuleType("google.genai.types")
+    fake_genai_types.GenerateContentConfig = _AcceptsAnyKwargs
+    fake_genai_types.Tool = _AcceptsAnyKwargs
+    fake_genai_types.GoogleSearch = _AcceptsAnyKwargs
+    fake_genai.types = fake_genai_types
+
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    monkeypatch.setitem(sys.modules, "google.genai.types", fake_genai_types)
+
+    result = backends_module.call_gemini("prompt", "system")
+    assert result == "real answer"
 
 
 # ---------------------------------------------------------------------------

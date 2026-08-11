@@ -2,7 +2,7 @@
 search.py — Web search stage for the org-pipeline.
 
 Builds per-org research prompts and dispatches to the configured AI backend
-(Gemini, Ollama, or Anthropic) to find current leadership for each office.
+(Gemini or Anthropic) to find current leadership for each office.
 """
 from __future__ import annotations
 
@@ -24,13 +24,15 @@ logger = logging.getLogger(__name__)
 _SOURCE_CUTOFF_YEARS: int = 3
 _CUTOFF_YEAR: int = datetime.date.today().year - _SOURCE_CUTOFF_YEARS
 
-# Patterns that identify a program office (PM, PdM, PEO, PMW, etc.).
+# Patterns that identify a program office (PM, PdM, PEO, PMW, PAE, etc.).
 # These orgs often lack a public leadership page, so the search strategy
 # shifts to acquisition data and explicitly targets "program manager" roles.
+# PAE (Program Acquisition Executive) included alongside PEO/PMO since it's
+# the same category of acquisition-leadership org, just a different label.
 _PROGRAM_OFFICE_RE = re.compile(
     r"""
-    \b(?:PM|PdM|PMW|PMR|PMO|PEO)\b   # common program-office abbreviations
-    | \bProgram\s+(?:Office|Manager|Management|Executive)\b
+    \b(?:PM|PdM|PMW|PMR|PMO|PEO|PAE)\b   # common program-office abbreviations
+    | \bProgram\s+(?:Office|Manager|Management|Executive|Acquisition\s+Executive)\b
     | \bProgram\b.{0,20}\bOffice\b    # e.g. "Rapid Capabilities Program Office"
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -172,7 +174,7 @@ def search_office(
     office: OrgEntry,
     index: int,
     total: int,
-    backend: str = "auto",
+    backend: str = "gemini",
     system_prompt: str | None = None,
 ) -> SearchResult:
     """Search for leadership for a single office.

@@ -35,6 +35,17 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # then fill in your
 streamlit run app.py
 ```
 
+**PAE Leadership Watch:** a separate section below the main org-lookup form. Unlike the main
+flow (which asks "who leads org X" for a known org), this asks a broad question — "what PAE
+(Portfolio Acquisition Executive) changes have been announced recently" — across official
+`.mil`/`defense.gov` press releases *and* defense trade press (Seapower Magazine, Breaking
+Defense, AFCEA, ExecutiveGov, MeriTalk). PAE is a newer, actively-rolling-out acquisition-
+leadership construct (broader authority than the older PEO model), and new appointments often
+show up in press coverage well before any per-org directory or website catches up — this exists
+specifically to surface those before they'd otherwise be found. Pick a lookback window (30–365
+days) and click **Scan for PAE changes**; results download the same way as the main flow (CSV or
+Excel). Logic lives in `pae_watch.py`.
+
 ---
 
 ## Command-line usage
@@ -56,8 +67,6 @@ The pipeline runs in 5 stages automatically:
 **Source priority:** DoW Directory leaders always come first. Web search adds anyone not already found. LinkedIn results are only included when no official source exists, and are flagged with `confidence = Low`.
 
 **Recency policy (team decision, 2026-06-29):** Sources older than 3 years are excluded entirely. Leadership data that old creates more CRM noise than it resolves.
-
-**Ollama fallback:** When Gemini is unavailable the pipeline falls back to a local Ollama instance. Ollama has no web access and uses training data only — results may be stale. Use `--backend gemini` to disable the fallback if you need live data.
 
 ---
 
@@ -170,7 +179,7 @@ rows = run_pipeline(
 | `--orgs` | — | Comma-separated org names *(required unless `--image`)* |
 | `--image` | — | Org chart image PNG/JPG/WebP *(required unless `--orgs`)* |
 | `--dow-pdf` | `data/2026_DoW_Directory.pdf` | DoW Directory PDF — scanned before web search |
-| `--backend` | `auto` | `gemini` (recommended) · `ollama` · `anthropic` · `auto` (Gemini → Ollama fallback) |
+| `--backend` | `gemini` | `gemini` (Google Search grounding) · `anthropic` (built-in web search tool) |
 | `--pdf` | — | Functional Organization Manual PDF for org descriptions |
 | `--output` | `outputs/org_output.csv` | Output CSV path |
 | `--no-search` | off | Skip web search — use DoW PDF only, no API quota consumed |
@@ -200,16 +209,18 @@ python3 -m pytest tests/
 gov-staff-pipeline-pryzm/
 ├── app.py                — Streamlit dashboard (non-technical front end)
 ├── pipeline.py           — Orchestration: run_pipeline() API + CLI entry point
-├── backends.py           — AI backend dispatch (Gemini, Ollama, Anthropic)
+├── backends.py           — AI backend dispatch (Gemini, Anthropic)
 ├── dow.py                — DoW Directory PDF parser
 ├── fetch_dow.py           — Downloads the latest DoW Directory PDF from siliconvalleydefense.org
 ├── search.py             — Web search stage (prompt builder + backend dispatch)
-├── utils.py              — Shared infrastructure (API clients, CSV writer, retry logic)
+├── pae_watch.py          — Scans press/trade press for recent PAE leadership changes
+├── utils.py              — Shared infrastructure (API clients, CSV/xlsx writers, retry logic)
 ├── data/
 │   └── 2026_DoW_Directory.pdf  — DoW Directory (fetched, not committed — see Web Dashboard section)
 ├── tests/
-│   ├── test_pipeline.py  — Unit tests (25 passing)
-│   └── test_fetch_dow.py — Tests for the DoW-fetch HTML parsing (5 passing)
+│   ├── test_pipeline.py  — Unit tests
+│   ├── test_fetch_dow.py — Tests for the DoW-fetch HTML parsing
+│   └── test_pae_watch.py — Tests for the PAE watch feature
 ├── requirements.txt      — Python dependencies
 ├── .streamlit/
 │   └── secrets.toml.example — API key template for the dashboard

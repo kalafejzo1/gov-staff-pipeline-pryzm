@@ -261,7 +261,7 @@ def run_pipeline(
     pdf: Path | None = None,
     dow_pdf: Path | None = None,
     output: Path | None = None,
-    backend: str = "auto",
+    backend: str = "gemini",
     no_search: bool = False,
 ) -> list[dict]:
     """Run the full pipeline and return the CSV rows.
@@ -278,7 +278,7 @@ def run_pipeline(
         pdf:      Path to a Functional Organization Manual PDF.
         dow_pdf:  Path to the DoW Directory PDF.
         output:   Output CSV path. Defaults to ``outputs/org_output.csv``.
-        backend:  AI backend — ``auto``, ``gemini``, ``ollama``, or ``anthropic``.
+        backend:  AI backend — ``gemini`` (default) or ``anthropic``.
         no_search: Skip web search; use DoW PDF only.
 
     Returns:
@@ -337,7 +337,7 @@ def run_pipeline(
                 continue
             search_results[name] = search_office(client, office, i, len(offices), backend)
             checkpoint.write_text(json.dumps(search_results, default=str))
-            time.sleep(5 if backend in ("gemini", "auto") else INTER_REQUEST_DELAY)
+            time.sleep(5 if backend == "gemini" else INTER_REQUEST_DELAY)
 
         checkpoint.unlink(missing_ok=True)
     else:
@@ -386,9 +386,9 @@ def main() -> None:
                         help="DoW Directory 2026 PDF (default: data/2026_DoW_Directory.pdf)")
     parser.add_argument("--output", default="outputs/org_output.csv",
                         help="Output CSV path (default: outputs/org_output.csv)")
-    parser.add_argument("--backend", default="auto",
-                        choices=["auto", "gemini", "ollama", "anthropic"],
-                        help="AI backend (default: auto — Gemini with Google Search grounding → Ollama fallback)")
+    parser.add_argument("--backend", default="gemini",
+                        choices=["gemini", "anthropic"],
+                        help="AI backend (default: gemini — Google Search grounding)")
     parser.add_argument("--no-search", action="store_true",
                         help="Skip web search — use DoW PDF only, no API quota consumed")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")

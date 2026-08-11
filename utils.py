@@ -353,6 +353,23 @@ def write_csv(rows: list[dict], output_path: str | Path) -> None:
     logger.info("Wrote %d rows → %s", len(rows), path)
 
 
+def rows_to_csv_bytes(rows: list[dict], fields: list[str] | None = None) -> bytes:
+    """Build CSV bytes from row dicts in memory — for a download button, not a file.
+
+    Args:
+        fields: Column order/selection. Defaults to CSV_FIELDS; pass a
+            different list to reuse this for another row shape, e.g.
+            PAE_ANNOUNCEMENT_FIELDS.
+    """
+    from io import StringIO
+
+    buf = StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fields or CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue().encode("utf-8")
+
+
 # Soft fill colors per confidence level — legible on-screen scan aid for
 # non-technical CRM users, not just a raw CSV of undifferentiated rows.
 _CONFIDENCE_FILLS = {
@@ -363,15 +380,26 @@ _CONFIDENCE_FILLS = {
 _COLUMN_WIDTHS = {
     "org_name": 32, "person_name": 22, "title": 38, "source": 42,
     "confidence": 12, "notes": 46, "description": 46, "acronym": 12,
+    "portfolio": 22, "service": 14, "status": 16, "date": 14, "summary": 50,
 }
 
 
-def rows_to_xlsx_bytes(rows: list[dict]) -> bytes:
-    """Build a formatted .xlsx workbook from CSV rows and return its bytes.
+def rows_to_xlsx_bytes(
+    rows: list[dict],
+    fields: list[str] | None = None,
+    sheet_title: str = "Leadership",
+) -> bytes:
+    """Build a formatted .xlsx workbook from row dicts and return its bytes.
 
-    Bold frozen header, sized columns, an autofilter, and a soft color fill
-    on the confidence column — meant to open directly in Excel or Google
-    Sheets and be immediately scannable without any CSV import step.
+    Bold frozen header, sized columns, an autofilter, and (when a
+    "confidence" column is present) a soft color fill on it — meant to open
+    directly in Excel or Google Sheets and be immediately scannable without
+    any CSV import step.
+
+    Args:
+        fields: Column order/selection. Defaults to CSV_FIELDS (the
+            leadership-lookup schema); pass a different list to reuse this
+            for another row shape, e.g. PAE_ANNOUNCEMENT_FIELDS.
     """
     from io import BytesIO
 
@@ -379,34 +407,37 @@ def rows_to_xlsx_bytes(rows: list[dict]) -> bytes:
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
+    fields = fields or CSV_FIELDS
+
     wb = Workbook()
     ws = wb.active
-    ws.title = "Leadership"
+    ws.title = sheet_title
 
     header_fill = PatternFill("solid", fgColor="211F1C")
     header_font = Font(color="F9F9F8", bold=True)
-    ws.append(CSV_FIELDS)
-    for col_idx, _ in enumerate(CSV_FIELDS, start=1):
+    ws.append(fields)
+    for col_idx, _ in enumerate(fields, start=1):
         cell = ws.cell(row=1, column=col_idx)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(vertical="center")
 
-    confidence_col = CSV_FIELDS.index("confidence") + 1
+    confidence_col = fields.index("confidence") + 1 if "confidence" in fields else None
     for row in rows:
-        ws.append([row.get(field, "") for field in CSV_FIELDS])
+        ws.append([row.get(field, "") for field in fields])
         r = ws.max_row
-        fill_color = _CONFIDENCE_FILLS.get(row.get("confidence"))
-        if fill_color:
-            ws.cell(row=r, column=confidence_col).fill = PatternFill("solid", fgColor=fill_color)
-        for col_idx in range(1, len(CSV_FIELDS) + 1):
+        if confidence_col:
+            fill_color = _CONFIDENCE_FILLS.get(row.get("confidence"))
+            if fill_color:
+                ws.cell(row=r, column=confidence_col).fill = PatternFill("solid", fgColor=fill_color)
+        for col_idx in range(1, len(fields) + 1):
             ws.cell(row=r, column=col_idx).alignment = Alignment(vertical="top", wrap_text=False)
 
-    for col_idx, field in enumerate(CSV_FIELDS, start=1):
+    for col_idx, field in enumerate(fields, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = _COLUMN_WIDTHS.get(field, 20)
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(CSV_FIELDS))}{ws.max_row}"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(fields))}{ws.max_row}"
 
     buf = BytesIO()
     wb.save(buf)

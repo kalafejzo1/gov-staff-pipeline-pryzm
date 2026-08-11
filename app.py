@@ -12,6 +12,7 @@ Deploy:        push to GitHub, deploy on Streamlit Community Cloud, add
 from __future__ import annotations
 
 import datetime
+import hashlib
 import logging
 import os
 import tempfile
@@ -21,8 +22,9 @@ from pathlib import Path
 import streamlit as st
 
 from fetch_dow import fetch_latest_dow_pdf
+from pae_watch import PAE_ANNOUNCEMENT_FIELDS, find_recent_pae_changes
 from pipeline import run_pipeline
-from utils import CSV_FIELDS, rows_to_xlsx_bytes
+from utils import CSV_FIELDS, rows_to_csv_bytes, rows_to_xlsx_bytes
 
 st.set_page_config(page_title="Gov Org Leadership Lookup", page_icon="🗂️", layout="wide")
 
@@ -151,6 +153,17 @@ with st.expander("What do the columns mean?"):
         "- Sources older than 3 years are excluded automatically."
     )
 
+with st.expander("Tips for entering organization names"):
+    st.markdown(
+        "- Use the plain organization name — e.g. **\"Office of Naval Research\"**, "
+        "not \"ONR (Office of Naval Research)\" or \"the Office of Naval Research\"\n"
+        "- Leave off role/type prefixes like **PAE**, **PMO**, or **PEO** unless they're "
+        "literally part of the formal name — they don't help matching and can hurt it\n"
+        "- A well-known acronym in parentheses is fine and harmless — "
+        "e.g. \"Defense Innovation Unit (DIU)\" works the same as without it\n"
+        "- One organization per line (or comma-separated) — don't combine two names on one line"
+    )
+
 mode = st.radio(
     "How do you want to provide organizations?",
     ["Type organization names", "Upload an org chart image"],
@@ -166,6 +179,13 @@ if mode == "Type organization names":
         placeholder="Office of Naval Research\nDefense Innovation Unit\nNavalX",
         height=140,
     )
+    _org_count = len([o for o in orgs_text.replace(",", "\n").splitlines() if o.strip()])
+    if _org_count > 50:
+        st.caption(
+            f"{_org_count} organizations — this can take a while (roughly 10–60s each). "
+            "If the page disconnects partway through, submit the exact same list again — "
+            "it picks up where it left off instead of starting over."
+        )
 else:
     image_file = st.file_uploader("Org chart image", type=["png", "jpg", "jpeg", "webp"])
     st.caption("The chart is parsed automatically to find the offices in it.")
@@ -174,6 +194,13 @@ with st.expander("Advanced options"):
     fom_file = st.file_uploader(
         "Functional Organization Manual PDF (optional — adds office descriptions)",
         type=["pdf"],
+        help=(
+            "A Functional Organization Manual (FOM) is a document some commands/agencies "
+            "publish describing their own offices' missions and programs — e.g. a Navy "
+            "systems command's FOM. If you have one for the organizations you're searching, "
+            "upload it here to fill in the description/acronym columns. Not the DoW "
+            "Directory — that's handled separately below."
+        ),
     )
     st.markdown("**DoW Directory 2026** (offline reference — checked before web search)")
     if _DOW_PDF_DEFAULT.exists():
@@ -233,7 +260,20 @@ if run_clicked:
             fom_path = tmpdir_path / fom_file.name
             fom_path.write_bytes(fom_file.getvalue())
 
-        output_path = tmpdir_path / f"{uuid.uuid4().hex}.csv"
+        if orgs:
+            # A deterministic path (not a fresh temp file) for the same org
+            # list + settings, so run_pipeline's existing checkpoint/resume
+            # logic (already used by the CLI) actually works from here too.
+            # Large batches can run long enough to hit a dropped connection —
+            # if that happens, submitting the same list again picks up where
+            # it left off instead of re-searching everything from scratch.
+            key = "|".join(sorted(orgs)) + f"|search={not no_search}"
+            run_key = hashlib.sha256(key.encode()).hexdigest()[:16]
+            output_dir = Path("outputs")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / f"{run_key}.csv"
+        else:
+            output_path = tmpdir_path / f"{uuid.uuid4().hex}.csv"
 
         rows = []
         pipeline_error = None
@@ -261,7 +301,7 @@ if run_clicked:
                     pdf=fom_path,
                     dow_pdf=dow_pdf_path,
                     output=output_path,
-                    backend="auto",
+                    backend="gemini",
                     no_search=no_search,
                 )
             except FileNotFoundError as exc:
@@ -327,3 +367,96 @@ if run_clicked:
                 type="primary",
                 use_container_width=True,
             )
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# PAE Watch — a different question than the section above. That flow asks
+# "who leads org X" for orgs you already know about; this asks "what PAE
+# (Portfolio Acquisition Executive) changes have been announced recently",
+# regardless of which org the person ends up tied to. PAE is a newer,
+# actively-rolling-out acquisition-leadership construct — new appointments
+# often show up in press releases and defense trade press well before any
+# per-org directory or website reflects them.
+# ---------------------------------------------------------------------------
+st.subheader("PAE Leadership Watch")
+st.caption(
+    "Scans official press releases and defense trade press (Seapower, Breaking Defense, "
+    "AFCEA, ExecutiveGov, MeriTalk, and more) for recently announced Portfolio Acquisition "
+    "Executive appointments and changes — across the Navy, Army, Air Force, and Space Force."
+)
+
+pae_lookback = st.slider(
+    "Look back how many days?", min_value=30, max_value=365, value=120, step=30,
+)
+pae_scan_clicked = st.button("Scan for PAE changes", icon=":material/travel_explore:")
+
+if pae_scan_clicked:
+    if not os.environ.get("GEMINI_API_KEY"):
+        st.error(
+            "This dashboard isn't fully set up yet — missing GEMINI_API_KEY. "
+            "Ask whoever deployed it to add it under the app's Settings → Secrets."
+        )
+        st.stop()
+
+    with st.status(f"Scanning the last {pae_lookback} days...", expanded=True) as pae_status:
+        pae_log_area = st.empty()
+        pae_log_lines: list[str] = []
+
+        class _PaeUIHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                pae_log_lines.append(self.format(record))
+                pae_log_area.code("\n".join(pae_log_lines[-20:]) or " ")
+
+        pae_handler = _PaeUIHandler()
+        pae_handler.setFormatter(logging.Formatter("%(message)s"))
+        root_logger = logging.getLogger()
+        prev_level = root_logger.level
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(pae_handler)
+
+        try:
+            announcements = find_recent_pae_changes(
+                None, backend="gemini", lookback_days=pae_lookback,
+            )
+        finally:
+            root_logger.removeHandler(pae_handler)
+            root_logger.setLevel(prev_level)
+
+        if not announcements:
+            pae_status.update(label="Finished — nothing found", state="error", expanded=True)
+        else:
+            pae_status.update(
+                label=f"Done — found {len(announcements)} announcement(s)",
+                state="complete", expanded=False,
+            )
+            pae_log_area.empty()
+
+    if not announcements:
+        st.warning(
+            "No PAE announcements found in that window. Try a longer lookback, "
+            "or this may just be a quiet stretch."
+        )
+    else:
+        st.dataframe(announcements, use_container_width=True, column_order=PAE_ANNOUNCEMENT_FIELDS)
+
+        pae_dl1, pae_dl2 = st.columns(2)
+        pae_dl1.download_button(
+            "Download CSV",
+            data=rows_to_csv_bytes(announcements, fields=PAE_ANNOUNCEMENT_FIELDS),
+            file_name="pae_announcements.csv",
+            mime="text/csv",
+            icon=":material/download:",
+            use_container_width=True,
+        )
+        pae_dl2.download_button(
+            "Download Excel",
+            data=rows_to_xlsx_bytes(
+                announcements, fields=PAE_ANNOUNCEMENT_FIELDS, sheet_title="PAE Announcements",
+            ),
+            file_name="pae_announcements.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            icon=":material/download:",
+            type="primary",
+            use_container_width=True,
+        )
