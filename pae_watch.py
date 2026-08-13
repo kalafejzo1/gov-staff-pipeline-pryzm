@@ -127,3 +127,52 @@ def find_recent_pae_changes(
             break
 
     return []
+
+
+_OFFICIAL_DOMAIN_RE = re.compile(r"^https?://[^/]*\.(mil|gov)(/|$)", re.IGNORECASE)
+_INTERIM_STATUS_RE = re.compile(r"interim|acting", re.IGNORECASE)
+
+
+def announcements_to_leadership_rows(announcements: list[dict]) -> list[dict]:
+    """Convert PAE announcements into the main leadership CSV schema (CSV_FIELDS).
+
+    Lets a PAE Watch result go straight into the CRM-ready export without a
+    redundant re-search through search_office() — the announcement already
+    has everything a row needs (name, title, source).
+
+    Confidence follows the same rule the rest of the pipeline uses: an
+    official .mil/.gov source is High, anything else (defense trade press —
+    Seapower, Breaking Defense, etc.) is Medium, matching how search.py
+    scores DVIDS/press-release sources.
+    """
+    rows: list[dict] = []
+    for a in announcements:
+        portfolio = a.get("portfolio") or "Unknown Portfolio"
+        status = a.get("status") or ""
+        source = a.get("source") or ""
+
+        is_interim = bool(_INTERIM_STATUS_RE.search(status))
+        title = f"Portfolio Acquisition Executive, {portfolio}"
+        if is_interim:
+            title += " (Interim)"
+
+        confidence = "High" if _OFFICIAL_DOMAIN_RE.match(source) else "Medium"
+
+        notes_parts = [a.get("summary") or ""]
+        if a.get("service"):
+            notes_parts.append(f"Service: {a['service']}.")
+        if is_interim:
+            notes_parts.append("Interim/acting per PAE Watch scan — confirm if made permanent.")
+        notes_parts.append(f"Sourced from PAE Watch scan ({a.get('date') or 'date unknown'}).")
+
+        rows.append({
+            "org_name":    f"PAE {portfolio}",
+            "person_name": a.get("person_name") or "",
+            "title":       title,
+            "source":      source,
+            "confidence":  confidence,
+            "notes":       " ".join(p for p in notes_parts if p),
+            "description": "",
+            "acronym":     "PAE",
+        })
+    return rows

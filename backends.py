@@ -73,19 +73,27 @@ def call_gemini(prompt: str, system: str) -> str:
             # "No text content" is a transient generation glitch (empty/blocked
             # response), not a real failure — observed in production to succeed
             # immediately on retry, same as the malformed-JSON case in search.py.
-            # Worth retrying with the same backoff as rate limits.
             is_empty_response = "no text content" in exc_str.lower()
-            if not (is_rate_limit or is_empty_response):
+            # "503 UNAVAILABLE — high demand" is Google's model being temporarily
+            # overloaded, not our request being wrong — also observed in
+            # production, also transient. ServerError covers other 5xx too.
+            is_server_overloaded = (
+                "ServerError" in type(exc).__name__
+                or "503" in exc_str or "UNAVAILABLE" in exc_str or "high demand" in exc_str.lower()
+            )
+            if not (is_rate_limit or is_empty_response or is_server_overloaded):
                 raise
             if is_rate_limit and "PerDay" in exc_str:
                 raise RuntimeError("Gemini daily quota exhausted — resets at midnight Pacific") from exc
             if attempt == 3:
                 raise
-            wait = 30 * attempt if is_rate_limit else 2 * attempt
-            logger.warning(
-                "Gemini %s — waiting %ds before retry (%d/3)...",
-                "rate limit" if is_rate_limit else "returned an empty response", wait, attempt,
-            )
+            if is_rate_limit or is_server_overloaded:
+                wait = 30 * attempt
+                reason = "rate limit" if is_rate_limit else "temporarily overloaded"
+            else:
+                wait = 2 * attempt
+                reason = "returned an empty response"
+            logger.warning("Gemini %s — waiting %ds before retry (%d/3)...", reason, wait, attempt)
             time.sleep(wait)
     raise RuntimeError("unreachable")
 

@@ -449,6 +449,65 @@ def test_call_gemini_retries_on_no_text_content(monkeypatch):
     assert result == "real answer"
 
 
+def test_call_gemini_retries_on_server_overloaded(monkeypatch):
+    # Regression test: a live run hit "503 UNAVAILABLE ... This model is
+    # currently experiencing high demand" — a transient Google-side overload,
+    # not a real failure — but it fell through both the rate-limit and
+    # empty-response retry checks and raised immediately.
+    import sys
+    import types as pytypes
+
+    import backends as backends_module
+
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr(backends_module.time, "sleep", lambda _: None)
+
+    class FakeResponse:
+        def __init__(self, text):
+            self.text = text
+            self.prompt_feedback = "STOP"
+
+    class ServerError(Exception):
+        pass
+
+    attempts = {"n": 0}
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise ServerError(
+                    "503 UNAVAILABLE. {'error': {'code': 503, 'message': "
+                    "'This model is currently experiencing high demand. "
+                    "Spikes in demand are usually temporary. Please try again later.', "
+                    "'status': 'UNAVAILABLE'}}"
+                )
+            return FakeResponse("real answer")
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = FakeModels()
+
+    class _AcceptsAnyKwargs:
+        def __init__(self, **kwargs):
+            pass
+
+    fake_genai = pytypes.ModuleType("google.genai")
+    fake_genai.Client = FakeClient
+    fake_genai_types = pytypes.ModuleType("google.genai.types")
+    fake_genai_types.GenerateContentConfig = _AcceptsAnyKwargs
+    fake_genai_types.Tool = _AcceptsAnyKwargs
+    fake_genai_types.GoogleSearch = _AcceptsAnyKwargs
+    fake_genai.types = fake_genai_types
+
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    monkeypatch.setitem(sys.modules, "google.genai.types", fake_genai_types)
+
+    result = backends_module.call_gemini("prompt", "system")
+    assert result == "real answer"
+    assert attempts["n"] == 2
+
+
 # ---------------------------------------------------------------------------
 # search_office — retry on malformed JSON
 # ---------------------------------------------------------------------------

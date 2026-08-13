@@ -22,7 +22,7 @@ from pathlib import Path
 import streamlit as st
 
 from fetch_dow import fetch_latest_dow_pdf
-from pae_watch import PAE_ANNOUNCEMENT_FIELDS, find_recent_pae_changes
+from pae_watch import PAE_ANNOUNCEMENT_FIELDS, announcements_to_leadership_rows, find_recent_pae_changes
 from pipeline import run_pipeline
 from utils import CSV_FIELDS, rows_to_csv_bytes, rows_to_xlsx_bytes
 
@@ -157,8 +157,14 @@ with st.expander("Tips for entering organization names"):
     st.markdown(
         "- Use the plain organization name — e.g. **\"Office of Naval Research\"**, "
         "not \"ONR (Office of Naval Research)\" or \"the Office of Naval Research\"\n"
-        "- Leave off role/type prefixes like **PAE**, **PMO**, or **PEO** unless they're "
-        "literally part of the formal name — they don't help matching and can hurt it\n"
+        "- Leave off role/type prefixes like **PMO** or **PEO** for established orgs — "
+        "they don't help matching and can hurt it\n"
+        "- **PAE is the opposite — keep it in.** PAE (Portfolio Acquisition Executive) is a "
+        "newer construct; searching just the portfolio name (e.g. \"Munitions\") tends to "
+        "pull in outdated PEO-era results as noise. \"PAE Munitions\" or \"Portfolio "
+        "Acquisition Executive Munitions\" both work equally well — just don't stack extra "
+        "qualifiers on top (e.g. \"Naval Aviation Portfolio Acquisition Executive\" performs "
+        "worse than plain \"PAE Aviation\")\n"
         "- A well-known acronym in parentheses is fine and harmless — "
         "e.g. \"Defense Innovation Unit (DIU)\" works the same as without it\n"
         "- One organization per line (or comma-separated) — don't combine two names on one line"
@@ -174,10 +180,28 @@ orgs_text = ""
 image_file = None
 
 if mode == "Type organization names":
+    org_list_file = st.file_uploader(
+        "Or upload a list (.txt or .csv — one org per line)",
+        type=["txt", "csv"],
+        help=(
+            "Prefills the box below — handy for a large batch, or a list you reuse. "
+            "There's no saved-lists feature; just keep the file on your machine and "
+            "re-upload it next time."
+        ),
+    )
+    if org_list_file is not None:
+        _uploaded_content = org_list_file.getvalue().decode("utf-8", errors="ignore")
+        _upload_id = (org_list_file.name, _uploaded_content)
+        if st.session_state.get("_last_uploaded_org_list") != _upload_id:
+            st.session_state["_last_uploaded_org_list"] = _upload_id
+            st.session_state["orgs_text_area"] = _uploaded_content
+            st.rerun()
+
     orgs_text = st.text_area(
         "Organization names (one per line, or comma-separated)",
         placeholder="Office of Naval Research\nDefense Innovation Unit\nNavalX",
         height=140,
+        key="orgs_text_area",
     )
     _org_count = len([o for o in orgs_text.replace(",", "\n").splitlines() if o.strip()])
     if _org_count > 50:
@@ -460,3 +484,34 @@ if pae_scan_clicked:
             type="primary",
             use_container_width=True,
         )
+
+        with st.expander("Add these to the main CRM export (no re-search needed)"):
+            st.caption(
+                "Converts these announcements directly into the same org_name/person_name/"
+                "title/source/confidence/notes/description/acronym format as the main "
+                "leadership lookup above — reusing what this scan already found instead of "
+                "spending another search on each person."
+            )
+            crm_rows = announcements_to_leadership_rows(announcements)
+            st.dataframe(crm_rows, use_container_width=True, column_order=CSV_FIELDS)
+
+            crm_dl1, crm_dl2 = st.columns(2)
+            crm_dl1.download_button(
+                "Download CSV",
+                data=rows_to_csv_bytes(crm_rows),
+                file_name="pae_leadership.csv",
+                mime="text/csv",
+                icon=":material/download:",
+                use_container_width=True,
+                key="pae_crm_csv",
+            )
+            crm_dl2.download_button(
+                "Download Excel",
+                data=rows_to_xlsx_bytes(crm_rows),
+                file_name="pae_leadership.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                icon=":material/download:",
+                type="primary",
+                use_container_width=True,
+                key="pae_crm_xlsx",
+            )
